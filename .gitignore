@@ -1,0 +1,9 @@
+# Ignore everything by default; only explicitly allowed files are tracked.
+*
+
+!.gitignore
+!AGENTS.md
+!settings.json
+!statusline-command.sh
+!directives/
+!directives/*.md

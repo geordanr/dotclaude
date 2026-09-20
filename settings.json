@@ -1,0 +1,7 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "bash /home/geordan/.claude/statusline-command.sh"
+  },
+  "tui": "fullscreen"
+}
