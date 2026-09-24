@@ -3,5 +3,9 @@
     "type": "command",
     "command": "bash /home/geordan/.claude/statusline-command.sh"
   },
-  "tui": "fullscreen"
+  "promptSuggestionEnabled": false,
+  "tui": "fullscreen",
+  "timeFormat": "24-hour",
+  "editorMode": "normal",
+  "autoContinueAtUsageLimit": false
 }

@@ -17,8 +17,7 @@ fi
 used_pct=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
 
 # --- Active agent time and tokens per minute ---
-# Parse transcript to compute agent-active duration (time Claude spends generating,
-# not waiting on tool calls) and cumulative output tokens.
+# Output tokens per minute of model generation time (tool execution excluded).
 transcript_path=$(echo "$input" | jq -r '.transcript_path // empty')
 
 active_secs=0
@@ -27,73 +26,56 @@ tpm=""
 if [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
   # Use python3 for reliable JSON parsing of the JSONL transcript
   result=$(python3 - "$transcript_path" <<'PYEOF'
-import sys, json, math
+import sys, json
+from datetime import datetime
 
-transcript_path = sys.argv[1]
-messages = []
+# Active time = model generation only. For each API response (grouped by
+# message.id), count from the entry that triggered it (user prompt or
+# tool_result) to its last streamed block. Tool execution, permission prompts
+# and user idle time fall between a tool_use and the next tool_result/prompt,
+# so they are excluded. Tokens = output tokens, deduplicated per message.id.
+def ts(e):
+    t = e.get('timestamp')
+    if not t:
+        return None
+    try:
+        return datetime.fromisoformat(t.replace('Z', '+00:00')).timestamp()
+    except ValueError:
+        return None
+
+spans = {}   # message.id -> [start, end]
+tokens = {}  # message.id -> output_tokens
+last_trigger = None
 try:
-    with open(transcript_path, 'r') as f:
+    with open(sys.argv[1]) as f:
         for line in f:
-            line = line.strip()
-            if line:
-                try:
-                    messages.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
-except Exception:
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get('isSidechain'):
+                continue
+            t = ts(e)
+            if t is None:
+                continue
+            if e.get('type') == 'assistant':
+                msg = e.get('message') or {}
+                mid = msg.get('id')
+                if not mid:
+                    continue
+                if mid not in spans:
+                    spans[mid] = [last_trigger if last_trigger is not None else t, t]
+                spans[mid][1] = t
+                out = (msg.get('usage') or {}).get('output_tokens') or 0
+                tokens[mid] = max(tokens.get(mid, 0), out)
+            elif e.get('type') == 'user':
+                last_trigger = t
+except OSError:
     pass
 
-# Compute agent-active time:
-# For each assistant turn, active time = (timestamp of last message in that turn) - (timestamp of first message in that turn)
-# We identify turns by consecutive messages with role=="assistant"
-# Between assistant turns there are user/tool messages (waiting time) which we exclude.
-
-active_ms = 0
-total_output_tokens = 0
-
-i = 0
-while i < len(messages):
-    msg = messages[i]
-    role = msg.get('role', msg.get('type', ''))
-    
-    if role == 'assistant':
-        # Find the span of this assistant turn
-        turn_start_ts = None
-        turn_end_ts = None
-        j = i
-        while j < len(messages):
-            m = messages[j]
-            r = m.get('role', m.get('type', ''))
-            if r != 'assistant':
-                break
-            ts = m.get('timestamp')
-            if ts is not None:
-                if turn_start_ts is None:
-                    turn_start_ts = ts
-                turn_end_ts = ts
-            # Count output tokens
-            usage = m.get('usage', {}) or {}
-            total_output_tokens += usage.get('output_tokens', 0)
-            j += 1
-        
-        if turn_start_ts is not None and turn_end_ts is not None:
-            active_ms += (turn_end_ts - turn_start_ts)
-        elif turn_start_ts is not None:
-            # Single message turn - count as 0 duration for that turn
-            pass
-        
-        i = j
-    else:
-        i += 1
-
-active_secs = active_ms / 1000.0
-
-if active_secs > 0 and total_output_tokens > 0:
-    active_mins = active_secs / 60.0
-    tpm = math.ceil(total_output_tokens / active_mins)
-else:
-    tpm = 0
-
+active_secs = sum(max(0.0, b - a) for a, b in spans.values())
+total = sum(tokens.values())
+tpm = round(total / (active_secs / 60)) if active_secs > 0 else 0
 print(f"{active_secs:.0f} {tpm}")
 PYEOF
   )
