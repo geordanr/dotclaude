@@ -3,9 +3,14 @@
     "type": "command",
     "command": "bash /home/geordan/.claude/statusline-command.sh"
   },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true
+  },
   "promptSuggestionEnabled": false,
   "tui": "fullscreen",
   "timeFormat": "24-hour",
   "editorMode": "normal",
-  "autoContinueAtUsageLimit": false
+  "autoContinueAtUsageLimit": false,
+  "model": "sonnet"
 }

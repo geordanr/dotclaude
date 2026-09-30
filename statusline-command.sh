@@ -3,15 +3,17 @@
 
 input=$(cat)
 
-# --- Current directory (leaf only) ---
+# --- Current directory (full path) ---
 cwd=$(echo "$input" | jq -r '.cwd // .workspace.current_dir // ""')
-dir=$(basename "$cwd")
 
 # --- Git branch (only if in a git repo) ---
 branch=""
 if [ -n "$cwd" ]; then
   branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null)
 fi
+
+# --- Current model ---
+model=$(echo "$input" | jq -r '.model.display_name // .model.id // empty')
 
 # --- Context used percentage ---
 used_pct=$(echo "$input" | jq -r '.context_window.used_percentage // empty')
@@ -102,12 +104,29 @@ format_duration() {
 # --- Assemble status line ---
 parts=()
 
-# Directory
-parts+=("$(printf '\033[1;34m%s\033[0m' "$dir")")
+# Directory: full path, with the portion below the home dir in bold.
+# The Windows home dir under WSL counts as a home dir too.
+dir_base=""
+for home_dir in "$HOME" /mnt/c/Users/geord; do
+  if [[ "$cwd" == "$home_dir"/* ]]; then
+    dir_base="$home_dir"
+    break
+  fi
+done
+if [ -n "$dir_base" ]; then
+  parts+=("$(printf '\033[0;96m%s/\033[1;96m%s\033[0m' "$dir_base" "${cwd#"$dir_base"/}")")
+else
+  parts+=("$(printf '\033[0;96m%s\033[0m' "$cwd")")
+fi
 
 # Git branch
 if [ -n "$branch" ] && [ "$branch" != "HEAD" ]; then
   parts+=("$(printf '\033[0;33m\xef\x9c\xa2 %s\033[0m' "$branch")")
+fi
+
+# Model
+if [ -n "$model" ]; then
+  parts+=("$(printf '\033[0;94m%s\033[0m' "$model")")
 fi
 
 # Context used
