@@ -23,9 +23,9 @@ In monorepos or multi-project repositories, per-directory AGENTS.md files take p
 
 ## Situational Subfiles
 
-Consult the relevant subfile(s) whenever the task involves the corresponding domain. These are always in effect — not optional.
+Read the relevant subfile(s) from `~/.claude/directives/` before starting any task that involves the corresponding domain. These are always in effect — not optional.
 
-- **Communication** — any time you are writing a response, explanation, or message: @directives/communication.md
-- **Coding** — any time you are reading, writing, or reviewing code: @directives/coding.md
-- **Git & PRs** — any time you are committing, branching, pushing, or working with pull requests: @directives/git.md
-- **Security** — any time you are handling credentials, writing code that touches auth/input/external systems, or doing security-related work: @directives/security.md
+- **Communication** — any time you are writing a response, explanation, or message: `~/.claude/directives/communication.md`
+- **Coding** — any time you are reading, writing, or reviewing code: `~/.claude/directives/coding.md`
+- **Git & PRs** — any time you are committing, branching, pushing, or working with pull requests: `~/.claude/directives/git.md`
+- **Security** — any time you are handling credentials, writing code that touches auth/input/external systems, or doing security-related work: `~/.claude/directives/security.md`
