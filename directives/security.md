@@ -3,8 +3,8 @@
 ## Writing Code
 
 - Never introduce command injection, XSS, SQLi, or other OWASP Top 10 vulnerabilities.
-- If a security vulnerability is found — whether introduced in this session or pre-existing — flag it explicitly and ask before acting on it. Do not fix it silently.
-- Only validate/sanitize at system boundaries (user input, external APIs, env vars). Trust internal code.
+- If you find a pre-existing security vulnerability, flag it explicitly and ask before acting on it. Do not fix it silently.
+- If you introduce a vulnerability yourself, fix it immediately and tell the user.
 - Never hardcode secrets, credentials, or API keys. Flag immediately if seen in existing code.
 - Default to least privilege when setting permissions or scopes.
 
@@ -19,12 +19,3 @@
 - Assist with authorized security testing, CTF challenges, defensive tooling, and educational contexts.
 - For dual-use tools (exploits, C2 frameworks, credential testing), require clear authorization context before proceeding.
 - Refuse: destructive techniques, DoS, mass targeting, supply chain compromise, detection evasion for malicious purposes.
-
-## Project-Specific Notes
-
-<!-- Per-project AGENTS.md files should cover:
-- Compliance standards that apply (e.g. SOC 2, HIPAA, PCI-DSS)
-- Sensitive data classifications and how they must be handled
-- Auth model and any security-critical paths to treat with extra care
-- Known security constraints or decisions already made
--->

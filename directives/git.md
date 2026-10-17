@@ -29,9 +29,10 @@
 - Body: concise, plain-language explanation of what changed and why. Easy to understand at a glance.
 - No bullet points in the body — prose only.
 - Blank line between subject and body.
+- Word wrap the body at 80 characters.
 
 ## PR Conventions
 
 - Title: same style as the commit subject — a single declarative sentence.
-- Body: concise summary of what changed and why, followed by a link to the related issue or ticket if one exists.
+- Body: concise summary of what changed and why, followed by a link to the related issue or ticket if one exists, then the agent attribution line provided by the harness (the PR equivalent of the commit co-author line).
 - No test plan checklist unless the change is complex enough to warrant one.
