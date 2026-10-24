@@ -6,10 +6,74 @@ input=$(cat)
 # --- Current directory (full path) ---
 cwd=$(echo "$input" | jq -r '.cwd // .workspace.current_dir // ""')
 
-# --- Git branch (only if in a git repo) ---
-branch=""
+# --- Git: branch, working-tree counts, ahead/behind, in-progress operation ---
+# One `git status` call, cached for a few seconds per directory: git over /mnt/c
+# is slow, and the status line redraws often.
+git_segment() {
+  local dir="$1"
+  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return
+
+  local status
+  status=$(git -C "$dir" status --porcelain=v2 --branch 2>/dev/null) || return
+
+  # head, staged, modified, untracked, conflicts, ahead, behind
+  local head staged modified untracked conflicts ahead behind
+  read -r head staged modified untracked conflicts ahead behind < <(
+    printf '%s\n' "$status" | awk '
+      /^# branch.oid /  { oid = substr($3, 1, 7) }
+      /^# branch.head / { head = $3 }
+      /^# branch.ab /   { ahead = substr($3, 2); behind = substr($4, 2) }
+      /^[12] / {
+        xy = $2
+        if (substr(xy, 1, 1) != ".") s++
+        if (substr(xy, 2, 1) != ".") m++
+      }
+      /^u / { c++ }
+      /^\? / { u++ }
+      END {
+        if (head == "(detached)") head = oid
+        printf "%s %d %d %d %d %d %d\n", head, s, m, u, c, ahead, behind
+      }')
+
+  local git_dir op=""
+  git_dir=$(git -C "$dir" rev-parse --absolute-git-dir 2>/dev/null)
+  if [ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ]; then
+    op="REBASE"
+  elif [ -f "$git_dir/MERGE_HEAD" ]; then
+    op="MERGE"
+  elif [ -f "$git_dir/CHERRY_PICK_HEAD" ]; then
+    op="CHERRY-PICK"
+  elif [ -f "$git_dir/REVERT_HEAD" ]; then
+    op="REVERT"
+  elif [ -f "$git_dir/BISECT_LOG" ]; then
+    op="BISECT"
+  fi
+
+  local out
+  out=$(printf '\033[1;93m\xe2\x8e\x87 %s\033[0m' "$head")
+  [ "$staged" -gt 0 ]    && out+=$(printf ' \033[0;92m+%d\033[0m' "$staged")
+  [ "$modified" -gt 0 ]  && out+=$(printf ' \033[38;5;215m~%d\033[0m' "$modified")
+  [ "$untracked" -gt 0 ] && out+=$(printf ' \033[38;5;250m?%d\033[0m' "$untracked")
+  [ "$conflicts" -gt 0 ] && out+=$(printf ' \033[1;91m!%d\033[0m' "$conflicts")
+  [ "$ahead" -gt 0 ]     && out+=$(printf ' \033[0;97m\xe2\x86\x91%d\033[0m' "$ahead")
+  [ "$behind" -gt 0 ]    && out+=$(printf ' \033[0;97m\xe2\x86\x93%d\033[0m' "$behind")
+  [ -n "$op" ]           && out+=$(printf ' \033[1;91m%s\033[0m' "$op")
+  printf '%s' "$out"
+}
+
+git_info=""
 if [ -n "$cwd" ]; then
-  branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null)
+  cache_ttl=5
+  cache_file="${TMPDIR:-/tmp}/claude-statusline-git-$(printf '%s' "$cwd" | md5sum | cut -c1-16)"
+  now=$(date +%s)
+  mtime=$(stat -c %Y "$cache_file" 2>/dev/null || echo 0)
+  if [ $((now - mtime)) -lt "$cache_ttl" ]; then
+    git_info=$(cat "$cache_file")
+  else
+    git_info=$(git_segment "$cwd")
+    tmp=$(mktemp "${cache_file}.XXXXXX" 2>/dev/null) &&
+      printf '%s' "$git_info" > "$tmp" && mv -f "$tmp" "$cache_file"
+  fi
 fi
 
 # --- Current model ---
@@ -103,58 +167,81 @@ format_duration() {
 
 # --- Assemble status line ---
 parts=()
+mparts=()
 
-# Directory: full path, with the portion below the home dir in bold.
-# The Windows home dir under WSL counts as a home dir too.
+# Directory: the home dir is shown as "~" and the Windows home dir (directly
+# or via the ~/winhome symlink) as "🪟~"; the portion below it is in bold.
+# Windows home is checked first because ~/winhome lies under $HOME.
 dir_base=""
-for home_dir in "$HOME" /mnt/c/Users/geord; do
-  if [[ "$cwd" == "$home_dir"/* ]]; then
+dir_label=""
+for entry in "/mnt/c/Users/geord:🪟~" "$HOME/winhome:🪟~" "$HOME:~"; do
+  home_dir="${entry%:*}"
+  if [[ "$cwd" == "$home_dir" || "$cwd" == "$home_dir"/* ]]; then
     dir_base="$home_dir"
+    dir_label="${entry##*:}"
     break
   fi
 done
-if [ -n "$dir_base" ]; then
-  parts+=("$(printf '\033[0;96m%s/\033[1;96m%s\033[0m' "$dir_base" "${cwd#"$dir_base"/}")")
-else
+if [ -z "$dir_base" ]; then
   parts+=("$(printf '\033[0;96m%s\033[0m' "$cwd")")
+elif [ "$cwd" = "$dir_base" ]; then
+  parts+=("$(printf '\033[1;96m%s\033[0m' "$dir_label")")
+else
+  parts+=("$(printf '\033[0;96m%s/\033[1;96m%s\033[0m' "$dir_label" "${cwd#"$dir_base"/}")")
 fi
 
-# Git branch
-if [ -n "$branch" ] && [ "$branch" != "HEAD" ]; then
-  parts+=("$(printf '\033[0;33m\xef\x9c\xa2 %s\033[0m' "$branch")")
+# Git
+if [ -n "$git_info" ]; then
+  parts+=("$git_info")
 fi
 
 # Model
 if [ -n "$model" ]; then
-  parts+=("$(printf '\033[0;94m%s\033[0m' "$model")")
+  mparts+=("$(printf '\033[1;95m%s\033[0m' "$model")")
 fi
 
 # Context used
 if [ -n "$used_pct" ]; then
   used_int=$(echo "$used_pct" | awk '{printf "%d", $1}')
   if [ "$used_int" -ge 80 ] 2>/dev/null; then
-    color='\033[1;31m'
+    color='\033[1;91m'
   elif [ "$used_int" -ge 50 ] 2>/dev/null; then
-    color='\033[0;33m'
+    color='\033[0;93m'
   else
-    color='\033[0;32m'
+    color='\033[0;92m'
   fi
-  parts+=("$(printf "${color}ctx:%d%%\033[0m" "$used_int")")
+  mparts+=("$(printf "${color}ctx:%d%%\033[0m" "$used_int")")
 fi
 
 # Active duration
 if [ -n "$active_secs" ] && [ "$active_secs" != "0" ]; then
   dur=$(format_duration "$active_secs")
-  parts+=("$(printf '\033[0;36mactive:%s\033[0m' "$dur")")
+  mparts+=("$(printf '\033[38;5;117mactive:%s\033[0m' "$dur")")
 fi
 
 # Tokens per minute
 if [ -n "$tpm_val" ] && [ "$tpm_val" -gt 0 ] 2>/dev/null; then
-  parts+=("$(printf '\033[0;35mtpm:%s\033[0m' "$tpm_val")")
+  # 950, 1.8k, 12.4k, 1.2M
+  tpm_fmt=$(awk -v n="$tpm_val" 'BEGIN {
+    if (n >= 999950) printf "%.1fM", n / 1e6   # not "1000.0k"
+    else if (n >= 1e3) printf "%.1fk", n / 1e3
+    else printf "%d", n
+  }')
+  mparts+=("$(printf '\033[38;5;223mtpm:%s\033[0m' "$tpm_fmt")")
+fi
+
+# Model, ctx, active and tpm form one segment, joined by a dim dot
+if [ ${#mparts[@]} -gt 0 ]; then
+  msep="$(printf '\033[38;5;244m \xc2\xb7 \033[0m')"
+  mgroup="${mparts[0]}"
+  for p in "${mparts[@]:1}"; do
+    mgroup="${mgroup}${msep}${p}"
+  done
+  parts+=("$mgroup")
 fi
 
 # Join with separator
-sep="$(printf '\033[0;90m \xe2\x94\x82 \033[0m')"
+sep="$(printf '\033[38;5;244m \xe2\x94\x82 \033[0m')"
 result_line=""
 for part in "${parts[@]}"; do
   if [ -z "$result_line" ]; then
